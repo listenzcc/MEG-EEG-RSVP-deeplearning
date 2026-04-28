@@ -166,12 +166,13 @@ import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument('--mode', type=str, default='EEG')
 parser.add_argument('--subj', type=str, default='S02')
-parser.add_argument('--device', type=int, default=4)
+parser.add_argument('--device', type=int, default=5)
 options = parser.parse_args()
 print(options)
 
 MODE = options.mode
 SUBJ = options.subj
+device = options.device
 
 print(f'Working on {MODE} - {SUBJ}')
 
@@ -182,7 +183,7 @@ assert DATA_DIR.exists(), f'{DATA_DIR} does not exist'
 
 from datetime import datetime
 timestr = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-OUTPUT_DIR = Path(f'results/{MODE}-{SUBJ}-{timestr}')
+OUTPUT_DIR = Path(f'results/{MODE}2.1-{SUBJ}-{timestr}')
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # %%
@@ -224,7 +225,6 @@ print(X.shape, y.shape)
 # y_val = torch.randint(0, 2, (500, 1)).float().cuda(device=device)
 
 n_samples, in_ch, n_times = X.shape
-device = 4
 
 cv = StratifiedKFold(n_splits=5, shuffle=True)
 for train_idx, test_idx in cv.split(X, y):
@@ -260,12 +260,22 @@ X_train = normalize(X_train)
 X_val = normalize(X_val)
 
 # %%
-model = RSVPTransformer(in_ch=in_ch).cuda(device=device)
+# default: in_ch=64, emb_dim=128, depth=4, num_heads=4, num_classes=1
+# emb_dim: 64, 128, 256, 512, MEG seems lower emb_dim works better, maybe because of the small dataset size
+# emb_dim should be divisible by num_heads
+# todo: num_heads = 8
+# test in 2.1
+model = RSVPTransformer(in_ch=in_ch, emb_dim=32, num_heads=4).cuda(device=device)
+
 # optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 # criterion = focal_loss
+
+# todo: lr too small?
+# test in 2.1
 optimizer = torch.optim.AdamW(
     model.parameters(),
-    lr=3e-4,        # ↓↓↓
+    # lr=3e-4,        # ↓↓↓
+    lr=10e-4,        # ↓↓↓
     weight_decay=1e-4
 )
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
