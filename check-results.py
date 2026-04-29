@@ -47,6 +47,9 @@ for file in files:
 table = pd.DataFrame(table)
 print(table)
 
+mean = table.groupby('mode')['auc'].mean()
+print(mean)
+
 
 # %% ---- 2026-04-27 ------------------------
 # Pending

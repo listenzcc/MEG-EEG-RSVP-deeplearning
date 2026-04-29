@@ -183,7 +183,7 @@ assert DATA_DIR.exists(), f'{DATA_DIR} does not exist'
 
 from datetime import datetime
 timestr = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-OUTPUT_DIR = Path(f'results/{MODE}2.1-{SUBJ}-{timestr}')
+OUTPUT_DIR = Path(f'results/{MODE}3-{SUBJ}-{timestr}')
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # %%
@@ -191,11 +191,23 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 def read_epochs(path, label_bin, label_tri):
     epochs = mne.read_epochs(path, preload=True)
     epochs.apply_baseline()
+
+    ch_names = epochs.ch_names
+    print(f'{path.name}: {len(epochs)} epochs, channels: {ch_names}', file=open(OUTPUT_DIR / 'log.txt', 'a'))
+
+    # todo: for MEG, only pick O, P, T, C channels (occipital, parietal, temporal, central), which are more relevant for RSVP. For EEG, keep all channels.
+    # 272 -> 204
+    if MODE == 'MEG' and True:
+        epochs.pick([e for e in ch_names if e[2] in ['O', 'P', 'T', 'C']])
+
     # epochs.filter(l_freq=0.1, h_freq=40, method='iir', n_jobs=-1)
     epochs.crop(0, 1)
     # X shape is (n_epochs, n_channels, n_times)
     X = epochs.get_data()
-    X = X[:, :200]
+
+    # todo: detrend timeseries in order 1
+
+    X = X[:, :, :200]
     y_bin = np.full((X.shape[0],), label_bin)
     y_tri = np.full((X.shape[0],), label_tri)
     return X, y_bin, y_tri
@@ -203,14 +215,17 @@ def read_epochs(path, label_bin, label_tri):
 
 # %%
 X1, y1_bin, y1_tri = read_epochs(
-    DATA_DIR / 'epochs-1-epo.fif', label_bin=0, label_tri=0)
+    DATA_DIR / 'epochs-1-epo.fif', label_bin=1, label_tri=1)
 X2, y2_bin, y2_tri = read_epochs(
-    DATA_DIR / 'epochs-2-epo.fif', label_bin=1, label_tri=1)
-X3, y3_bin, y3_tri = read_epochs(
-    DATA_DIR / 'epochs-3-epo.fif', label_bin=1, label_tri=2)
+    DATA_DIR / 'epochs-2-epo.fif', label_bin=0, label_tri=0)
+# X3, y3_bin, y3_tri = read_epochs(
+#     DATA_DIR / 'epochs-3-epo.fif', label_bin=0, label_tri=2)
 
-X = np.concatenate((X1, X2, X3), axis=0)
-y = np.concatenate((y1_bin, y2_bin, y3_bin), axis=0)
+# X = np.concatenate((X1, X2, X3), axis=0)
+# y = np.concatenate((y1_bin, y2_bin, y3_bin), axis=0)
+
+X = np.concatenate((X1, X2), axis=0)
+y = np.concatenate((y1_bin, y2_bin), axis=0)
 # y_tri = np.concatenate((y1_tri, y2_tri, y3_tri), axis=0)
 print(X.shape, y.shape)
 
@@ -240,8 +255,8 @@ print(f'{X_val.shape=}, {y_val.shape=}')
 
 
 # example output:
-# X_train.shape=(2300, 62, 201), y_train.shape=(2300,)
-# X_val.shape=(576, 62, 201), y_val.shape=(576,)
+# X.shape: (n_trials, n_channels, n_times) = (2876, 62, 201)
+# y.shape: (n_trials,) = (2876,)
 
 # %%
 X_train = torch.from_numpy(X_train).float().cuda(device=device)
@@ -253,7 +268,8 @@ y_val = torch.from_numpy(y_val).float().cuda(device=device)
 
 
 def normalize(x):
-    return (x - x.mean(dim=-1, keepdim=True)) / (x.std(dim=-1, keepdim=True) + 1e-6)
+    # return (x - x.mean(dim=-1, keepdim=True)) / (x.std(dim=-1, keepdim=True) + 1e-6)
+    return (x - x.mean(dim=1, keepdim=True)) / (x.std(dim=1, keepdim=True) + 1e-6)
 
 
 X_train = normalize(X_train)
@@ -264,18 +280,16 @@ X_val = normalize(X_val)
 # emb_dim: 64, 128, 256, 512, MEG seems lower emb_dim works better, maybe because of the small dataset size
 # emb_dim should be divisible by num_heads
 # todo: num_heads = 8
-# test in 2.1
-model = RSVPTransformer(in_ch=in_ch, emb_dim=32, num_heads=4).cuda(device=device)
+# test in 2.2
+model = RSVPTransformer(in_ch=in_ch).cuda(device=device)
 
 # optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 # criterion = focal_loss
 
-# todo: lr too small?
-# test in 2.1
 optimizer = torch.optim.AdamW(
     model.parameters(),
     # lr=3e-4,        # ↓↓↓
-    lr=10e-4,        # ↓↓↓
+    lr=1e-3,        # ↓↓↓
     weight_decay=1e-4
 )
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -289,6 +303,7 @@ criterion = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 # Using torch util board to log training and validation loss
 
 batch_size = 64
+batch_size = 128
 
 train_loader = DataLoader(
     TensorDataset(X_train, y_train),
